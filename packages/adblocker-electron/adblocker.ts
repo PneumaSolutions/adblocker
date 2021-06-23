@@ -15,8 +15,6 @@ import type {
   IMessageFromBackground,
 } from '@cliqz/adblocker-electron-preload';
 
-const PRELOAD_PATH = require.resolve('@cliqz/adblocker-electron-preload');
-
 // https://stackoverflow.com/questions/48854265/why-do-i-see-an-electron-security-warning-after-updating-my-electron-project-t
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
 
@@ -69,9 +67,13 @@ export class BlockingContext {
     this.onIsMutationObserverEnabled = (event) => blocker.onIsMutationObserverEnabled(event);
   }
 
-  public enable(): void {
+  public enable(preloadPath: string | null): void {
     if (this.blocker.config.loadCosmeticFilters === true) {
-      this.session.setPreloads(this.session.getPreloads().concat([PRELOAD_PATH]));
+      if (preloadPath === null) {
+        preloadPath = require.resolve('@cliqz/adblocker-electron-preload');
+        this.blocker.setPreloadPath(preloadPath);
+      }
+      this.session.setPreloads(this.session.getPreloads().concat([preloadPath]));
       ipcMain.on('get-cosmetic-filters', this.onGetCosmeticFilters);
       ipcMain.on('is-mutation-observer-enabled', this.onIsMutationObserverEnabled);
     }
@@ -82,7 +84,7 @@ export class BlockingContext {
     }
   }
 
-  public disable(): void {
+  public disable(preloadPath: string | null): void {
     if (this.blocker.config.loadNetworkFilters === true) {
       // NOTE - there is currently no support in Electron for multiple
       // webRequest listeners registered for the same event. This means that
@@ -97,7 +99,11 @@ export class BlockingContext {
     }
 
     if (this.blocker.config.loadCosmeticFilters === true) {
-      this.session.setPreloads(this.session.getPreloads().filter((p) => p !== PRELOAD_PATH));
+      if (preloadPath === null) {
+        preloadPath = require.resolve('@cliqz/adblocker-electron-preload');
+        this.blocker.setPreloadPath(preloadPath);
+      }
+      this.session.setPreloads(this.session.getPreloads().filter((p) => p !== preloadPath));
       ipcMain.removeListener('get-cosmetic-filters', this.onGetCosmeticFilters);
       ipcMain.removeListener('is-mutation-observer-enabled', this.onIsMutationObserverEnabled);
     }
@@ -110,6 +116,7 @@ export class BlockingContext {
  */
 export class ElectronBlocker extends FiltersEngine {
   private readonly contexts: WeakMap<Electron.Session, BlockingContext> = new WeakMap();
+  private preloadPath: string | null = null;
 
   // ----------------------------------------------------------------------- //
   // Helpers to enable and disable blocking for 'browser'
@@ -124,7 +131,7 @@ export class ElectronBlocker extends FiltersEngine {
     // Create new blocking context for `session`
     context = new BlockingContext(session, this);
     this.contexts.set(session, context);
-    context.enable();
+    context.enable(this.preloadPath);
 
     return context;
   }
@@ -136,7 +143,7 @@ export class ElectronBlocker extends FiltersEngine {
     }
 
     this.contexts.delete(session);
-    context.disable();
+    context.disable(this.preloadPath);
   }
 
   public isBlockingEnabled(session: Electron.Session): boolean {
@@ -256,6 +263,10 @@ export class ElectronBlocker extends FiltersEngine {
       callback({});
     }
   };
+
+  public setPreloadPath(preloadPath: string): void {
+    this.preloadPath = preloadPath;
+  }
 
   private injectScripts(sender: Electron.WebContents, script: string): void {
     sender.executeJavaScript(script);
